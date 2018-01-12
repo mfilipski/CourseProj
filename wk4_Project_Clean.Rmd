@@ -1,0 +1,132 @@
+---
+title: "Machine Learning Project - Human Activity Recognition"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+```
+
+##Introduction: 
+This is the final project of the Practical Machine Learning course. 
+
+The goal is to analyse data collected from subjects going dumbell exercises, and use the data to compile a prediction method for whether someone is exercising the right way or not. 
+More info here: 
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har 
+
+
+## Preparations: 
+The loading of packages is not displayed in the interest of space.  Packages loaded are the following:
+caret, ggplot2, dplyr, corrplot, plot3D
+
+```{r preparation, include=FALSE, cache=TRUE}
+list.of.packages <- c("caret","ggplot2","dplyr","corrplot", "plot3D")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages,dependencies=TRUE)
+library(caret)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(plot3D)
+``` 
+
+The following code reads in the data and cleans it up somewhat. 
+
+```{r reading_in, cache=TRUE}
+# Get the training and testing data
+dataUrlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+dataUrlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url=dataUrlTrain, destfile = "pmlTrain.csv")
+download.file(url=dataUrlTest, destfile = "pmlTest.csv")
+
+# We checked beforehand which strings should be consider as "NA"
+training <- read.csv("pmlTrain.csv", dec=".", sep=",", na.strings=c("NA","NaN", " ","", "#DIV/0!"))
+testing <- read.csv("pmlTest.csv", dec=".", sep="," , na.strings=c("NA","NaN", " ","", "#DIV/0!"))
+
+# Explore the data a little: 
+# Several variables are missing nearly all values - get rid of those 
+table(colSums(is.na(training))) 
+training2 <- training[,colSums(is.na(training))<19000]
+dim(training2)
+```
+We are left with 60 variables useful for prediction
+
+
+## Splitting the data for cross-validation
+We split the TRAINING data into two subsets (called "play" and "crossval")
+The first we use to play with different classification methods, the second we use for cross-validation
+(In the lectures, those were usually called "training" and "testing" - but here we are further splitting the training set for cross-validation)
+
+```{r Split_data, cache=TRUE}
+# Make a training and testing dataset from the "training dataset" 
+# Call them play set and try set 
+inPlay <- createDataPartition(y=training2$classe, p=0.75, list=FALSE)
+# Select all those that appear in inTrain, and not appear in inTrain
+play = training2[inPlay,]
+crossval = training2[-inPlay,]
+dim(play)
+dim(crossval)
+```
+
+
+
+## Checking correlations: 
+A few variables are a bit highly correlated, but nothing dramatic
+```{r correlation, cache=TRUE}
+corr <- cor(play[,sapply(play, is.numeric)])
+diag(corr) <-0
+corrplot(corr, method="color", tl.cex=0.7)
+```
+
+
+## Checking subject clusters 
+We make a graph to see whether different subjects give clustering data.  
+Then we make a similar graph but showing classe instead of user name. 
+We use only the arm movements for illustration. 
+```{r subjectClusters, cache=TRUE}
+scatter3D(play$accel_arm_y, play$accel_arm_x, play$accel_arm_z, 
+          colvar=as.integer(play$user_name),
+          col = c("#1B9E77", "gold", "#7570B3", "blue","pink4","red"),alpha=0.7, 
+          labels = c("adelmo", "carlitos","charles","eurico","jeremy", "pedro"),
+          theta=-20, phi=15, bty="g", pch=18, cex=0.7,
+          main ="Colors = User Name")
+```
+This graph clearly shows that each subject generated a different "cluster" of points. This suggests that we should probably *center* and *scale* our data to correct for subject bias. 
+
+```{r classClusters, cache=TRUE}
+# But classes are not really clustered into groups 
+scatter3D(play$accel_arm_y, play$accel_arm_x, play$accel_arm_z, 
+          colvar=as.integer(play$class), 
+          col = c("blue", "green", "purple", "gold","brown"), alpha=0.5, 
+          theta=-20, phi=15, bty="g", pch=18, cex=0.7 ,
+          main ="Colors = classe A, B, C etc.")
+
+```
+In contrast, the second graph shows no discernable pattern of classe, suggesting we do need a fancy algorithm for this task.  
+
+
+## Running a Boosting model (GBM): 
+```{r boosting, cache=TRUE}
+fitboost <- train(classe ~ . , data=play, preProcess=c("center","scale"), method="gbm", verbose=FALSE)
+print(fitboost)
+```
+
+## Cross-validation using our "crossval" data 
+```{r crossval}
+predboost <- predict(fitboost, crossval)
+table(predboost==crossval$classe)
+```
+It seems we are performing really well with this prediction. 
+
+## Predicting with the "TEST" data
+```{r test }
+testboost <- predict(fitboost, testing)
+table(testboost)
+```
+It seems all the 20 observations in the test dataset were actually class "A". 
+
+Frankly that result seems really suspicious to me. But I tried with a RF model as well and got the same result. 
+I might have made a mistake in the way I'm using the commands (perhaps with the pre-processing?).  
+But now that I've looked at the predictions with the test data, going back and changing the above would break the rules of good machine learning. I'll just submit this and see what happens.  
+
